@@ -159,3 +159,57 @@ class CircadianMCIPredictor(nn.Module):
             f"circ_encoder={self.circadian_encoder[1].in_features}→"
             f"{self.circadian_encoder[1].out_features})"
         )
+
+
+# ── Ablation baseline ─────────────────────────────────────────────────────────
+class BehavioralOnlyBaseline(nn.Module):
+    """
+    Ablation baseline: single-stream GRU on behavioral features only.
+    No circadian stream. Used to quantify the value of the circadian
+    phase encoder in the ablation study.
+
+    Parameters
+    ----------
+    n_behavioral : int    Number of behavioral input features.
+    gru_hidden   : int    GRU hidden state size (default 64).
+    gru_layers   : int    Number of stacked GRU layers (default 2).
+    dropout      : float  Dropout probability (default 0.3).
+    """
+
+    def __init__(
+        self,
+        n_behavioral: int = 15,
+        gru_hidden:   int = 64,
+        gru_layers:   int = 2,
+        dropout:      float = 0.3,
+    ) -> None:
+        super().__init__()
+
+        self.norm = nn.LayerNorm(n_behavioral)
+        self.gru  = nn.GRU(
+            input_size=n_behavioral,
+            hidden_size=gru_hidden,
+            num_layers=gru_layers,
+            batch_first=True,
+            dropout=dropout if gru_layers > 1 else 0.0,
+        )
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(gru_hidden, 32),
+            nn.GELU(),
+            nn.Linear(32, 1),
+            nn.Sigmoid(),
+        )
+        _xavier_init(self)
+
+    def forward(
+        self,
+        behavioral_seq: torch.Tensor,
+        circadian_seq:  torch.Tensor | None = None,  # ignored — ablation only
+    ) -> torch.Tensor:
+        _, h_n = self.gru(self.norm(behavioral_seq))
+        return self.classifier(h_n[-1])
+
+    @property
+    def n_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
